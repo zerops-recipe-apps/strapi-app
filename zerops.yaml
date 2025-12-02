@@ -1,0 +1,74 @@
+zerops:
+  - setup: base
+    run:
+      base: nodejs@22
+      ports:
+        - port: 1337
+          httpSupport: true
+      envVariables:
+        DATABASE_HOST: ${db_hostname}
+        DATABASE_PORT: ${db_port}
+        DATABASE_NAME: ${db_dbName}
+        DATABASE_USERNAME: ${db_user}
+        DATABASE_PASSWORD: ${db_password}
+        
+        S3_ACCESS_KEY_ID: ${storage_accessKeyId}
+        S3_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
+        S3_ENDPOINT_URL: ${storage_apiUrl}
+        S3_ENDPOINT_HOST: ${storage_apiHost}
+        S3_BUCKET_NAME: ${storage_bucketName}
+        
+        SMTP_HOST: ${SMTP_HOST_OVERRIDE:-mailpit}
+        SMTP_PORT: ${SMTP_PORT_OVERRIDE:-1025}
+        
+        LOG_LEVEL: info
+        
+  - setup: prod
+    extends: base
+    build:
+      base: nodejs@22
+      envVariables:
+        NODE_ENV: production
+      buildCommands:
+        - npm ci
+        - npm run build
+      deployFiles:
+        - ./
+      cache:
+        - node_modules
+    deploy:
+      readinessCheck:
+        httpGet:
+          path: /_health
+          port: 1337
+    run:
+      envVariables:
+        NODE_ENV: production
+        # Don't run migrations by default, only in 'migrate.sh'
+        # in init commands.
+        RUN_MIGRATIONS: false
+      initCommands:
+        # Run migrations only on single container per deploy to prevent
+        # data corruption. Utilizing https://docs.zerops.io/references/zsc#execonce
+        # 
+        # Since Strapi doesn't currently have a command to run migrations,
+        # we have to wrap the app boot, migrate and start into bash script,
+        # which terminates when the app starts listening (after migrations are executed).
+        - zsc execOnce "migrate-$ZEROPS_appVersionId" -- bash migrate.sh
+      start: npm run start
+      healthCheck:
+        httpGet:
+          path: /_health
+          port: 1337 
+
+  - setup: dev
+    extends: base
+    build:
+      deployFiles:
+        - ./
+    run:
+      os: ubuntu
+      base: nodejs@22
+      initCommands:
+        - npm install
+        - zsc execOnce "seed-example-data" -- npm run seed:example
